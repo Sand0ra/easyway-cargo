@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: cargo_mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo_backup:/backup
+
+  bot:
+    build:
+      context: ..
+      dockerfile: devops/Dockerfile
+    container_name: cargo_bot
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      - MONGO_URL=mongodb://admin:password@mongo:27017/cargo_bot?authSource=admin
+      - TZ=Asia/Shanghai
+    volumes:
+      - bot_logs:/app/logs
+
+volumes:
+  mongo_data:
+    driver: local
+  bot_logs:
+    driver: local

@@ -1,0 +1,364 @@
+import asyncio
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
+
+from database.mongo_db import get_active_shipments, get_client_by_phone
+from export.google_sheets import process_shipment_row
+
+BOT_TOKEN = "7996530552:AAFWtFFSQbhZGQ5AcIaC1PhQEJaclsO90qM"
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+user_sessions = {}
+
+
+def main_menu():
+    """Главное меню с красивыми эмодзи"""
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👤 Ваши данные")],
+            [KeyboardButton(text="🏢 Адрес склада в Китае")],
+            [KeyboardButton(text="📦 Актуальные посылки")],
+            [KeyboardButton(text="🎥 Видео инструкция")],
+            [KeyboardButton(text="❓ FAQ")],
+            [KeyboardButton(text="📞 Связаться с нами")],
+            [KeyboardButton(text="➕ Добавить трек")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите раздел 👇"
+    )
+    return kb
+
+
+share_phone_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Обработчик команды /start с приветственным сообщением"""
+    welcome_text = (
+        "🎉 Добро пожаловать в EasyWay Cargo!\n\n"
+        "Для доступа к персональным данным и отслеживанию посылок "
+        "нам нужен ваш номер телефона.\n\n"
+        "📲 Нажмите кнопку ниже, чтобы поделиться номером:"
+    )
+
+    await message.answer(welcome_text, reply_markup=share_phone_kb)
+
+
+@dp.message(F.contact)
+async def auth_user(message: Message):
+    """Аутентификация пользователя по номеру телефона"""
+    phone = message.contact.phone_number
+    print("🔐 Получен номер:", phone)
+
+    client = get_client_by_phone(phone)
+    print("👤 Найден клиент:", client)
+
+    if client is None:
+        error_text = (
+            "❌ Ваш номер не найден в базе\n\n"
+            "Пожалуйста, проверьте правильность номера или "
+            "обратитесь в поддержку для регистрации."
+        )
+        await message.answer(error_text)
+        return
+
+    user_sessions[message.from_user.id] = client
+
+    welcome_back_text = (
+        f"👤 <b>ВАШИ ДАННЫЕ</b>\n"
+        "────────────────────\n"
+        f"🎫 <b>Персональный код:</b>\n"
+        f"   <code>{client['client_code']}</code>\n\n"
+        f"📛 <b>ФИО:</b>\n"
+        f"   {client.get('name', 'Не указано')}\n\n"
+        f"📞 <b>Телефон:</b>\n"
+        f"   {client.get('phone', 'Не указан')}\n\n"
+        f"💡 Для изменения данных обратитесь в поддержку"
+    )
+
+    await message.answer(welcome_back_text, reply_markup=main_menu(), parse_mode="HTML")
+
+
+@dp.message(F.text == "👤 Ваши данные")
+async def my_data(message: Message):
+    """Отображение данных пользователя"""
+    client = user_sessions.get(message.from_user.id)
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
+    client_data = get_client_by_phone(client["phone"])
+    if not client_data:
+        await message.answer("❌ Ваши данные не найдены в базе")
+        return
+
+    profile_text = (
+        f"👤 <b>ВАШИ ДАННЫЕ</b>\n"
+        "────────────────────\n"
+        f"🎫 <b>Персональный код:</b>\n"
+        f"   <code>{client_data['client_code']}</code>\n\n"
+        f"📛 <b>ФИО:</b>\n"
+        f"   {client_data.get('name', 'Не указано')}\n\n"
+        f"📞 <b>Телефон:</b>\n"
+        f"   {client_data.get('phone', 'Не указан')}\n\n"
+        f"💡 Для изменения данных обратитесь в поддержку"
+    )
+
+    await message.answer(profile_text, parse_mode="HTML")
+
+
+@dp.message(F.text == "🏢 Адрес склада в Китае")
+async def warehouse(message: Message):
+    """Отправка адреса склада в Китае"""
+    client = user_sessions.get(message.from_user.id)
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
+    fcode = client["client_code"]
+    warehouse_text = (
+        f"🏢 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n"
+        "────────────────────\n\n"
+        f"<b>Ваш код:</b> <code>{fcode}</code>\n\n"
+        f"<b>Адрес:</b>\n"
+        "广东省广州市越秀区荔德路318号汇富国际A27栋103号1899库房\n\n"
+        f"<b>Метка:</b>\n"
+        f"比什凯克“номер телефона”唛头 <code>{fcode}</code>\n\n"
+        f"<b>Телефон склада:</b>\n"
+        "📞 13711589799\n\n"
+        f"⚠️ <b>ВАЖНО:</b> Обязательно отправьте скриншот заполненного адреса менеджеру!"
+    )
+
+    await message.answer(warehouse_text, parse_mode="HTML")
+
+
+@dp.message(F.text == "📦 Актуальные посылки")
+async def current_tracks(message: Message):
+    """Отображение активных посылок"""
+    client = user_sessions.get(message.from_user.id)
+
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
+    fcode = client["client_code"]
+    shipments = get_active_shipments(fcode)
+
+    if not shipments:
+        empty_text = (
+            "📦 <b>АКТУАЛЬНЫЕ ПОСЫЛКИ</b>\n"
+            "────────────────────\n\n"
+            "😔 У вас пока нет активных посылок\n\n"
+            "💡 Добавьте трек-номер через меню '➕ Добавить трек'"
+        )
+        await message.answer(empty_text, parse_mode="HTML")
+        return
+
+    header_text = (
+        "📦 <b>ВАШИ АКТИВНЫЕ ПОСЫЛКИ</b>\n"
+        "────────────────────\n\n"
+    )
+
+    shipment_texts = []
+    for i, shipment in enumerate(shipments, 1):
+        shipment_text = (
+            f"<b>Посылка #{i}</b>\n"
+            f"📮 <b>Трек:</b> <code>{shipment['track_number']}</code>\n"
+            f"📅 <b>Отправлен:</b> {shipment['date_sent']}\n"
+            f"⚖️ <b>Вес:</b> {shipment['weight']} кг\n"
+            f"🎒 <b>Мешок:</b> {shipment['bag_number']}\n"
+            "────────────────────"
+        )
+        shipment_texts.append(shipment_text)
+
+    # Разбиваем сообщение если посылок много
+    full_text = header_text + "\n\n".join(shipment_texts)
+
+    if len(full_text) > 4096:
+        # Если сообщение слишком длинное, разбиваем на части
+        parts = []
+        current_part = header_text
+        for shipment_text in shipment_texts:
+            if len(current_part + "\n\n" + shipment_text) > 4096:
+                parts.append(current_part)
+                current_part = shipment_text
+            else:
+                current_part += "\n\n" + shipment_text
+        parts.append(current_part)
+
+        for part in parts:
+            await message.answer(part, parse_mode="HTML")
+    else:
+        await message.answer(full_text, parse_mode="HTML")
+
+
+@dp.message(F.text == "🎥 Видео инструкция")
+async def video_instruction(message: Message):
+    """Отправка видео инструкций"""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛍️ Pinduoduo", url="https://youtube.com/...")],
+            [InlineKeyboardButton(text="📦 Taobao", url="https://youtube.com/...")],
+            [InlineKeyboardButton(text="🏪 1688", url="https://youtube.com/...")],
+            [InlineKeyboardButton(text="👟 Poizon", url="https://youtube.com/...")],
+        ]
+    )
+
+    video_text = (
+        "🎥 <b>ВИДЕО ИНСТРУКЦИИ</b>\n"
+        "────────────────────\n\n"
+        "📹 Выберите платформу для просмотра инструкции по заказу:\n\n"
+        "💡 В видео подробно показано:\n"
+        "• Как оформить заказ\n"
+        "• Как указать адрес склада\n"
+        "• Что делать после заказа"
+    )
+
+    await message.answer(video_text, reply_markup=kb, parse_mode="HTML")
+
+
+@dp.message(F.text == "❓ FAQ")
+async def faq(message: Message):
+    """Часто задаваемые вопросы"""
+    faq_text = (
+        "❓ <b>ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ</b>\n"
+        "────────────────────\n\n"
+        "<b>🚫 Запрещённые товары:</b>\n"
+        "• Взрывоопасные вещества\n"
+        "• Ядовитые и химические вещества\n"
+        "• Растения и семена\n"
+        "• Оружие и боеприпасы\n"
+        "• Лекарства без рецепта\n"
+        "• Алкоголь и табачные изделия\n\n"
+        "<b>📏 Минимальный вес:</b>\n"
+        "• 100 грамм\n\n"
+        "<b>⏱️ Сроки доставки:</b>\n"
+        "• 8–12 дней\n\n"
+    )
+
+    await message.answer(faq_text, parse_mode="HTML")
+
+
+@dp.message(F.text == "📞 Связаться с нами")
+async def contact(message: Message):
+    """Контактная информация"""
+    contact_text = (
+        "📞 <b>СВЯЗАТЬСЯ С НАМИ</b>\n"
+        "────────────────────\n\n"
+        "💬 Мы всегда рады помочь вам!\n\n"
+        "<b>📱 WhatsApp:</b>\n"
+        "📞 0998 001688\n\n"
+        "<b>📸 Instagram:</b>\n"
+        "@easyway_cargo_kg\n\n"
+        "<b>📢 Telegram канал:</b>\n"
+        "Скоро будет...\n\n"
+    )
+
+    await message.answer(contact_text, parse_mode="HTML")
+
+
+@dp.message(F.text == "➕ Добавить трек")
+async def ask_track(message: Message):
+    """Запрос трек-номера"""
+    track_text = (
+        "➕ <b>ДОБАВЛЕНИЕ ТРЕК-НОМЕРА</b>\n"
+        "────────────────────\n\n"
+        "📮 Отправьте трек-номер одной посылки\n\n"
+        "💡 Примеры трек-номеров:\n"
+        "• RB123456789CN\n"
+        "• UH0012345678\n"
+        "• 123456789012\n\n"
+        "⚠️ Отправляйте только один трек-номер за раз"
+    )
+
+    await message.answer(track_text, parse_mode="HTML")
+
+
+@dp.message(F.text.regexp(r"^[A-Za-z0-9]{8,20}$"))
+async def add_track(message: Message):
+    """Добавление трек-номера"""
+    client = user_sessions.get(message.from_user.id)
+
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
+    track = message.text.strip().upper()
+
+    # Проверяем авторизацию через сессию
+    if not client.get("phone"):
+        await message.answer("❌ Ошибка авторизации. Пожалуйста, перезапустите бота через /start")
+        return
+
+    data = {
+        "tracking_number": track,
+        "client_code": client["client_code"]
+    }
+
+    try:
+        process_shipment_row(data)
+        success_text = (
+            f"✅ <b>ТРЕК-НОМЕР УСПЕШНО ДОБАВЛЕН!</b>\n"
+            "────────────────────\n\n"
+            f"📮 <b>Трек:</b> <code>{track}</code>\n"
+            f"👤 <b>Клиент:</b> {client.get('name', 'Не указано')}\n"
+            f"🎫 <b>Код:</b> <code>{client['client_code']}</code>\n\n"
+            "💡 Посылка появится в разделе '📦 Актуальные посылки' после обработки"
+        )
+        await message.answer(success_text, parse_mode="HTML")
+
+    except Exception as e:
+        error_text = (
+            f"❌ <b>ОШИБКА ДОБАВЛЕНИЯ</b>\n"
+            "────────────────────\n\n"
+            f"Не удалось добавить трек-номер <code>{track}</code>\n\n"
+            "⚠️ Пожалуйста, попробуйте позже или обратитесь в поддержку"
+        )
+        await message.answer(error_text, parse_mode="HTML")
+        print(f"Ошибка при добавлении трека: {e}")
+
+
+@dp.message()
+async def unknown_message(message: Message):
+    """Обработчик неизвестных сообщений"""
+    help_text = (
+        "🤖 <b>КОМАНДЫ БОТА</b>\n"
+        "────────────────────\n\n"
+        "Используйте кнопки меню ниже или команды:\n\n"
+        "🔹 /start - Начать работу\n"
+        "🔹 /help - Помощь\n\n"
+        "💡 Если что-то не работает - обратитесь в поддержку через раздел '📞 Связаться с нами'"
+    )
+
+    await message.answer(help_text, reply_markup=main_menu(), parse_mode="HTML")
+
+
+async def main():
+    """Основная функция запуска бота"""
+    print("🚀 Бот EasyWay Cargo запущен!")
+    print("📞 Ожидание сообщений...")
+
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        print(f"❌ Ошибка при запуске бота: {e}")
+    finally:
+        await bot.session.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

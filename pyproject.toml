@@ -1,0 +1,36 @@
+[project]
+name = "xportal"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.22.0",
+    "google>=3.0.0",
+    "google-api-python-client>=2.187.0",
+    "google-auth>=2.43.0",
+    "gspread>=6.2.1",
+    "pymongo>=4.15.4",
+    "python-calamine>=0.5.4",
+]
+
+[tool.ruff]
+line-length = 88
+exclude = ["src/database/migrations/versions"]
+src = ["src"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "B",
+    "C",
+    "I",
+    "N",
+]
+ignore = ["W191", "B904", "C416"]
+
