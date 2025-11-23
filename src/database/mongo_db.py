@@ -11,16 +11,14 @@ mongo_db = get_db()
 
 
 def get_client_by_phone(phone: str):
-    phone = phone.replace("+", "").strip()
-
     variants = [
-        phone[1:],
-        phone,  # как есть (+996501592328)
-        phone[3:],  # 501592328 (убрали 996)
-        "0" + phone[3:],  # 0501592328
+        phone[1:], # 996501592328
+        phone,  # +996501592328
+        phone[4:],  # 501592328
+        "0" + phone[4:],  # 0501592328
     ]
     print(variants)
-    variants = list(set(variants))  # убрать дубли
+    variants = list(set(variants))
 
     return mongo_db.clients.find_one({"phone": {"$in": variants}})
 
@@ -47,3 +45,17 @@ def save_shipment(shipment_data: dict):
         {"$setOnInsert": shipment_data},  # данные вставятся только если записи нет
         upsert=True,
     )
+
+
+def get_next_client_code():
+    last = mongo_db.clients.find_one(
+        sort=[("code_number", -1)]
+    )
+
+    if not last:
+        next_num = 1
+    else:
+        next_num = last["code_number"] + 1
+
+    return f"F-{next_num:04d}", next_num
+

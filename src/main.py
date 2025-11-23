@@ -3,6 +3,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -10,14 +11,20 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from database.mongo_db import get_active_shipments, get_client_by_phone
-from export.google_sheets import process_shipment_row
+from database.mongo_db import (
+    get_active_shipments,
+    get_client_by_phone,
+    get_next_client_code,
+    save_client,
+)
+from export.google_sheets import FILES_DIR, process_shipment_row
 
 BOT_TOKEN = "7996530552:AAFWtFFSQbhZGQ5AcIaC1PhQEJaclsO90qM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 user_sessions = {}
+pending_registration = {}
 
 
 def main_menu():
@@ -68,10 +75,13 @@ async def auth_user(message: Message):
     print("👤 Найден клиент:", client)
 
     if client is None:
+        pending_registration[message.from_user.id] = {
+                "phone": phone,
+                "step": "name"
+            }
         error_text = (
             "❌ Ваш номер не найден в базе\n\n"
-            "Пожалуйста, проверьте правильность номера или "
-            "обратитесь в поддержку для регистрации."
+            "Чтобы зарегистрироваться, отправьте ваше *ФИО*."
         )
         await message.answer(error_text)
         return
@@ -123,13 +133,13 @@ async def my_data(message: Message):
 
 @dp.message(F.text == "🏢 Адрес склада в Китае")
 async def warehouse(message: Message):
-    """Отправка адреса склада в Китае"""
     client = user_sessions.get(message.from_user.id)
     if not client:
         await message.answer("🔒 Сначала авторизуйтесь через /start")
         return
 
     fcode = client["client_code"]
+
     warehouse_text = (
         f"🏢 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n"
         "────────────────────\n\n"
@@ -143,7 +153,15 @@ async def warehouse(message: Message):
         f"⚠️ <b>ВАЖНО:</b> Обязательно отправьте скриншот заполненного адреса менеджеру!"
     )
 
-    await message.answer(warehouse_text, parse_mode="HTML")
+    photo_path = FILES_DIR / "5262799002216893718.jpg"
+
+    photo = FSInputFile(photo_path)
+
+    await message.answer_photo(
+        photo=photo,
+        caption=warehouse_text,
+        parse_mode="HTML"
+    )
 
 
 @dp.message(F.text == "📦 Актуальные посылки")
@@ -330,6 +348,41 @@ async def add_track(message: Message):
         )
         await message.answer(error_text, parse_mode="HTML")
         print(f"Ошибка при добавлении трека: {e}")
+
+@dp.message(lambda m: m.from_user.id in pending_registration)
+async def registration_handler(message: Message):
+    user_id = message.from_user.id
+
+    if user_id not in pending_registration:
+        return
+
+    name = message.text.strip()
+    phone = pending_registration[user_id]["phone"]
+
+    client_code, code_number = get_next_client_code()
+
+    new_client = {
+        "name": name,
+        "phone": phone,
+        "client_code": client_code,
+        "code_number": code_number,
+    }
+
+    save_client(new_client)
+
+    user_sessions[user_id] = new_client
+
+    del pending_registration[user_id]
+
+    await message.answer(
+        f"🎉 <b>Регистрация завершена!</b>\n\n"
+        f"📛 <b>ФИО:</b> {name}\n"
+        f"🎫 <b>Код:</b> <code>{client_code}</code>\n"
+        f"📞 <b>Телефон:</b> {phone}\n\n"
+        f"Теперь вы можете пользоваться ботом.",
+        parse_mode="HTML",
+        reply_markup=main_menu()
+    )
 
 
 @dp.message()
