@@ -1,3 +1,6 @@
+import asyncio
+import sys
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -5,10 +8,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from pymongo import MongoClient
 
+from notify import notify_client_about_sent
 
-# ==========================================================
-# DATABASE
-# ==========================================================
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 def get_db():
     mongo_url = "mongodb://mongo:27017/cargo_bot"
@@ -18,10 +20,6 @@ def get_db():
 
 mongo_db = get_db()
 
-
-# ==========================================================
-# SAVE FUNCTIONS (UPSERT)
-# ==========================================================
 
 def save_client(client_data: dict):
     mongo_db.clients.update_one(
@@ -38,10 +36,6 @@ def save_shipment(shipment_data: dict):
         upsert=True,
     )
 
-
-# ==========================================================
-# CONFIG
-# ==========================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 FILES_DIR = BASE_DIR / "files"
@@ -60,9 +54,6 @@ creds = Credentials.from_service_account_file(
     scopes=GOOGLE_SCOPES,
 )
 
-
-# ==========================================================
-# HELPERS
 # ==========================================================
 
 def get_google_sheet(key: str):
@@ -78,10 +69,6 @@ def parse_sheet(key: str) -> List[Dict]:
         print(f"Ошибка при парсинге таблицы ({key}): {e}")
         return []
 
-
-# ==========================================================
-# FIELD NORMALIZERS
-# ==========================================================
 
 def normalize_phone(phone: str) -> str:
     phone = phone.replace("+", "").strip()
@@ -101,25 +88,27 @@ def to_str(v) -> str:
     return str(v).strip() if v is not None else ""
 
 
-# ==========================================================
-# DATA PROCESSORS
-# ==========================================================
+def parse_code(client_code: str) -> int:
+    if not client_code:
+        return 0
+
+    digits = "".join(ch for ch in client_code if ch.isdigit())
+
+    return int(digits) if digits else 0
+
+
 
 def process_client_row(row: dict) -> dict:
-    """
-    Приводим данные клиента к стандартной структуре.
-    """
+    code = to_str(row.get("Персональный код"))
     return {
-        "client_code": to_str(row.get("Персональный код")),
+        "client_code": code,
+        "code_number": parse_code(code),
         "name": to_str(row.get("ФИО")),
         "phone": normalize_phone(to_str(row.get("номер телефона"))),
     }
 
 
 def process_shipment_row(row: dict) -> dict:
-    """
-    Приводим данные отправления к нашей унифицированной структуре.
-    """
     return {
         "sent_date": to_str(row.get("Дата отправки")),
         "client_code": to_str(row.get("Код груза")),
@@ -139,14 +128,42 @@ def sync_clients():
     print(f"Синхронизировано клиентов: {len(rows)}")
 
 
-def sync_shipments():
+async def sync_shipments(bot):
     rows = parse_sheet(SPREADSHEETS["shipments"])
+
     for row in rows:
         data = process_shipment_row(row)
+
+        tracking = data["tracking_number"]
+        if not tracking:
+            continue
+
+        existing = mongo_db.shipments.find_one({"tracking_number": tracking})
+
         save_shipment(data)
+
+        if data["sent_date"] and (not existing or not existing.get("sent_date")):
+            await notify_client_about_sent(bot, data)
+
     print(f"Синхронизировано отправлений: {len(rows)}")
 
 
-if __name__ == "__main__":
-    sync_clients()
-    sync_shipments()
+async def run_sync(fn, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(fn, *args))
+
+
+async def periodic_sync(bot):
+    while True:
+        print("🔄 Синхронизация Google Sheet → MongoDB…")
+
+        try:
+            await run_sync(sync_clients)
+            await sync_shipments(bot)  # ← Теперь это async функция
+
+            print("✅ Синхронизация завершена!")
+        except Exception as e:
+            print("❌ Ошибка синхронизации:", e)
+
+        await asyncio.sleep(60 * 60 * 2)  # 3 минуты
+

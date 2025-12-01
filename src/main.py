@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -16,8 +17,10 @@ from database.mongo_db import (
     get_client_by_phone,
     get_next_client_code,
     save_client,
+    save_shipment,
 )
-from export.google_sheets import FILES_DIR, process_shipment_row
+from export.google_sheets import periodic_sync
+from export.write_to_sheets import add_client_to_sheet, add_shipment_to_sheet
 
 BOT_TOKEN = "7996530552:AAFWtFFSQbhZGQ5AcIaC1PhQEJaclsO90qM"
 
@@ -26,6 +29,8 @@ dp = Dispatcher()
 user_sessions = {}
 pending_registration = {}
 
+BASE_DIR = Path(__file__).resolve().parent
+FILES_DIR = BASE_DIR / "export" / "files"
 
 def main_menu():
     """Главное меню с красивыми эмодзи"""
@@ -74,11 +79,14 @@ async def auth_user(message: Message):
     client = get_client_by_phone(phone)
     print("👤 Найден клиент:", client)
 
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
     if client is None:
-        pending_registration[message.from_user.id] = {
-                "phone": phone,
-                "step": "name"
-            }
+        pending_registration[user_id] = {
+            "phone": phone,
+            "step": "name"
+        }
         error_text = (
             "❌ Ваш номер не найден в базе\n\n"
             "Чтобы зарегистрироваться, отправьте ваше *ФИО*."
@@ -86,11 +94,15 @@ async def auth_user(message: Message):
         await message.answer(error_text)
         return
 
-    user_sessions[message.from_user.id] = client
+    if client.get("chat_id") != chat_id:
+        client["chat_id"] = chat_id
+        save_client(client)
+
+    user_sessions[user_id] = client
 
     welcome_back_text = (
         f"👤 <b>ВАШИ ДАННЫЕ</b>\n"
-        "────────────────────\n"
+        "─────────────\n"
         f"🎫 <b>Персональный код:</b>\n"
         f"   <code>{client['client_code']}</code>\n\n"
         f"📛 <b>ФИО:</b>\n"
@@ -118,7 +130,7 @@ async def my_data(message: Message):
 
     profile_text = (
         f"👤 <b>ВАШИ ДАННЫЕ</b>\n"
-        "────────────────────\n"
+        "─────────────\n"
         f"🎫 <b>Персональный код:</b>\n"
         f"   <code>{client_data['client_code']}</code>\n\n"
         f"📛 <b>ФИО:</b>\n"
@@ -133,35 +145,26 @@ async def my_data(message: Message):
 
 @dp.message(F.text == "🏢 Адрес склада в Китае")
 async def warehouse(message: Message):
-    client = user_sessions.get(message.from_user.id)
-    if not client:
-        await message.answer("🔒 Сначала авторизуйтесь через /start")
-        return
-
-    fcode = client["client_code"]
-
     warehouse_text = (
-        f"🏢 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n"
+        "🏢 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n"
         "────────────────────\n\n"
-        f"<b>Ваш код:</b> <code>{fcode}</code>\n\n"
-        f"<b>Адрес:</b>\n"
-        "广东省广州市越秀区荔德路318号汇富国际A27栋103号1899库房\n\n"
-        f"<b>Метка:</b>\n"
-        f"比什凯克“номер телефона”唛头 <code>{fcode}</code>\n\n"
-        f"<b>Телефон склада:</b>\n"
-        "📞 13711589799\n\n"
-        f"⚠️ <b>ВАЖНО:</b> Обязательно отправьте скриншот заполненного адреса менеджеру!"
+        "收货人: F-код\n"
+        "广东省广州市越秀区荔德路318号\n"
+        "汇富国际A27栋103号 1899库房\n"
+        "比什凯克 “номер тел” 唛头 F-код\n"
+        "电话: 13711589799\n\n"
+        "<b>Важно:</b>\n"
+        "Обязательно отправьте скриншот заполненного адреса менеджеру.\n"
+        "Только после подтверждения правильности заполнения мы несём ответственность за груз.\n\n"
+        "Менеджер: 0998 001688"
     )
 
     photo_path = FILES_DIR / "5262799002216893718.jpg"
 
     photo = FSInputFile(photo_path)
 
-    await message.answer_photo(
-        photo=photo,
-        caption=warehouse_text,
-        parse_mode="HTML"
-    )
+    await message.answer_photo(photo=photo, caption=warehouse_text, parse_mode="HTML")
+
 
 
 @dp.message(F.text == "📦 Актуальные посылки")
@@ -179,7 +182,7 @@ async def current_tracks(message: Message):
     if not shipments:
         empty_text = (
             "📦 <b>АКТУАЛЬНЫЕ ПОСЫЛКИ</b>\n"
-            "────────────────────\n\n"
+            "─────────────\n\n"
             "😔 У вас пока нет активных посылок\n\n"
             "💡 Добавьте трек-номер через меню '➕ Добавить трек'"
         )
@@ -188,18 +191,24 @@ async def current_tracks(message: Message):
 
     header_text = (
         "📦 <b>ВАШИ АКТИВНЫЕ ПОСЫЛКИ</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
     )
 
     shipment_texts = []
     for i, shipment in enumerate(shipments, 1):
+        tracking = shipment.get("tracking_number") or "—"
+        sent_date = shipment.get("sent_date") or "Еще не отправлен"
+        weight_kg = shipment.get("weight_kg")
+        weight_str = f"{weight_kg} кг" if weight_kg else "—"
+        bag_number = shipment.get("bag_number") or "—"
+
         shipment_text = (
             f"<b>Посылка #{i}</b>\n"
-            f"📮 <b>Трек:</b> <code>{shipment['track_number']}</code>\n"
-            f"📅 <b>Отправлен:</b> {shipment['date_sent']}\n"
-            f"⚖️ <b>Вес:</b> {shipment['weight']} кг\n"
-            f"🎒 <b>Мешок:</b> {shipment['bag_number']}\n"
-            "────────────────────"
+            f"📮 <b>Трек:</b> <code>{tracking}</code>\n"
+            f"📅 <b>Отправлен:</b> {sent_date}\n"
+            f"⚖️ <b>Вес:</b> {weight_str}\n"
+            f"🎒 <b>Мешок:</b> {bag_number}\n"
+            "─────────────"
         )
         shipment_texts.append(shipment_text)
 
@@ -229,16 +238,30 @@ async def video_instruction(message: Message):
     """Отправка видео инструкций"""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🛍️ Pinduoduo", url="https://youtube.com/...")],
-            [InlineKeyboardButton(text="📦 Taobao", url="https://youtube.com/...")],
-            [InlineKeyboardButton(text="🏪 1688", url="https://youtube.com/...")],
-            [InlineKeyboardButton(text="👟 Poizon", url="https://youtube.com/...")],
+            [
+                InlineKeyboardButton(
+                    text="📦 Taobao",
+                    url="https://youtube.com/shorts/FjjB6uNWh2Y?feature=shareё",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏪 1688",
+                    url="https://youtube.com/shorts/jcecBGNvkj8?feature=share",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👟 Poizon",
+                    url="https://youtube.com/shorts/y40P6sRT5tc?feature=share",
+                )
+            ],
         ]
     )
 
     video_text = (
         "🎥 <b>ВИДЕО ИНСТРУКЦИИ</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
         "📹 Выберите платформу для просмотра инструкции по заказу:\n\n"
         "💡 В видео подробно показано:\n"
         "• Как оформить заказ\n"
@@ -254,7 +277,7 @@ async def faq(message: Message):
     """Часто задаваемые вопросы"""
     faq_text = (
         "❓ <b>ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
         "<b>🚫 Запрещённые товары:</b>\n"
         "• Взрывоопасные вещества\n"
         "• Ядовитые и химические вещества\n"
@@ -276,7 +299,7 @@ async def contact(message: Message):
     """Контактная информация"""
     contact_text = (
         "📞 <b>СВЯЗАТЬСЯ С НАМИ</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
         "💬 Мы всегда рады помочь вам!\n\n"
         "<b>📱 WhatsApp:</b>\n"
         "📞 0998 001688\n\n"
@@ -292,9 +315,14 @@ async def contact(message: Message):
 @dp.message(F.text == "➕ Добавить трек")
 async def ask_track(message: Message):
     """Запрос трек-номера"""
+    client = user_sessions.get(message.from_user.id)
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
     track_text = (
         "➕ <b>ДОБАВЛЕНИЕ ТРЕК-НОМЕРА</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
         "📮 Отправьте трек-номер одной посылки\n\n"
         "💡 Примеры трек-номеров:\n"
         "• RB123456789CN\n"
@@ -328,21 +356,22 @@ async def add_track(message: Message):
     }
 
     try:
-        process_shipment_row(data)
+
         success_text = (
             f"✅ <b>ТРЕК-НОМЕР УСПЕШНО ДОБАВЛЕН!</b>\n"
-            "────────────────────\n\n"
+            "─────────────\n\n"
             f"📮 <b>Трек:</b> <code>{track}</code>\n"
             f"👤 <b>Клиент:</b> {client.get('name', 'Не указано')}\n"
             f"🎫 <b>Код:</b> <code>{client['client_code']}</code>\n\n"
             "💡 Посылка появится в разделе '📦 Актуальные посылки' после обработки"
         )
         await message.answer(success_text, parse_mode="HTML")
-
+        save_shipment(data)
+        add_shipment_to_sheet(data)
     except Exception as e:
         error_text = (
             f"❌ <b>ОШИБКА ДОБАВЛЕНИЯ</b>\n"
-            "────────────────────\n\n"
+            "─────────────\n\n"
             f"Не удалось добавить трек-номер <code>{track}</code>\n\n"
             "⚠️ Пожалуйста, попробуйте позже или обратитесь в поддержку"
         )
@@ -352,6 +381,7 @@ async def add_track(message: Message):
 @dp.message(lambda m: m.from_user.id in pending_registration)
 async def registration_handler(message: Message):
     user_id = message.from_user.id
+    chat_id = message.chat.id
 
     if user_id not in pending_registration:
         return
@@ -366,6 +396,7 @@ async def registration_handler(message: Message):
         "phone": phone,
         "client_code": client_code,
         "code_number": code_number,
+        "chat_id": chat_id,
     }
 
     save_client(new_client)
@@ -383,6 +414,7 @@ async def registration_handler(message: Message):
         parse_mode="HTML",
         reply_markup=main_menu()
     )
+    add_client_to_sheet(client_code, name, phone)
 
 
 @dp.message()
@@ -390,7 +422,7 @@ async def unknown_message(message: Message):
     """Обработчик неизвестных сообщений"""
     help_text = (
         "🤖 <b>КОМАНДЫ БОТА</b>\n"
-        "────────────────────\n\n"
+        "─────────────\n\n"
         "Используйте кнопки меню ниже или команды:\n\n"
         "🔹 /start - Начать работу\n"
         "🔹 /help - Помощь\n\n"
@@ -406,7 +438,16 @@ async def main():
     print("📞 Ожидание сообщений...")
 
     try:
+        sync_task = asyncio.create_task(periodic_sync(bot))
+
         await dp.start_polling(bot)
+
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
+
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
     finally:

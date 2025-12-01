@@ -41,21 +41,21 @@ def save_client(client_data: dict):
 
 def save_shipment(shipment_data: dict):
     mongo_db.shipments.update_one(
-        {"tracking_number": shipment_data["tracking_number"]},  # критерий уникальности
-        {"$setOnInsert": shipment_data},  # данные вставятся только если записи нет
+        {"tracking_number": shipment_data["tracking_number"]},
+        {"$set": shipment_data},
         upsert=True,
     )
 
 
 def get_next_client_code():
     last = mongo_db.clients.find_one(
+        {"code_number": {"$exists": True}},
         sort=[("code_number", -1)]
     )
 
     if not last:
         next_num = 1
     else:
-        next_num = last["code_number"] + 1
+        next_num = int(last["code_number"]) + 1
 
-    return f"F-{next_num:04d}", next_num
-
+    return f"f-{next_num:04d}", next_num
