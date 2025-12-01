@@ -6,35 +6,11 @@ from typing import Dict, List, Optional
 
 import gspread
 from google.oauth2.service_account import Credentials
-from pymongo import MongoClient
 
+from database.mongo_db import mongo_db, save_client, save_shipment
 from notify import notify_client_about_sent
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-def get_db():
-    mongo_url = "mongodb://mongo:27017/cargo_bot"
-    client = MongoClient(mongo_url)
-    return client["cargo_bot"]
-
-
-mongo_db = get_db()
-
-
-def save_client(client_data: dict):
-    mongo_db.clients.update_one(
-        {"client_code": client_data["client_code"]},
-        {"$set": client_data},
-        upsert=True,
-    )
-
-
-def save_shipment(shipment_data: dict):
-    mongo_db.shipments.update_one(
-        {"tracking_number": shipment_data["tracking_number"]},
-        {"$set": shipment_data},
-        upsert=True,
-    )
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -165,5 +141,5 @@ async def periodic_sync(bot):
         except Exception as e:
             print("❌ Ошибка синхронизации:", e)
 
-        await asyncio.sleep(60 * 60 * 2)  # 3 минуты
+        await asyncio.sleep(60 * 2)
 

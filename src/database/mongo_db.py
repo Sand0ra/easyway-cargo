@@ -33,8 +33,8 @@ def get_active_shipments(client_code):
 
 def save_client(client_data: dict):
     mongo_db.clients.update_one(
-        {"phone": client_data["phone"]},  # критерий уникальности
-        {"$setOnInsert": client_data},  # данные вставятся только если записи нет
+        {"client_code": client_data["client_code"]},
+        {"$set": client_data},
         upsert=True,
     )
 
