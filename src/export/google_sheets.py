@@ -141,5 +141,5 @@ async def periodic_sync(bot):
         except Exception as e:
             print("❌ Ошибка синхронизации:", e)
 
-        await asyncio.sleep(60 * 2)
+        await asyncio.sleep(60 * 60)
 
