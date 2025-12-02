@@ -135,7 +135,7 @@ async def periodic_sync(bot):
 
         try:
             await run_sync(sync_clients)
-            await sync_shipments(bot)  # ← Теперь это async функция
+            await sync_shipments(bot)
 
             print("✅ Синхронизация завершена!")
         except Exception as e:

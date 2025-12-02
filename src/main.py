@@ -145,14 +145,24 @@ async def my_data(message: Message):
 
 @dp.message(F.text == "🏢 Адрес склада в Китае")
 async def warehouse(message: Message):
+    client = user_sessions.get(message.from_user.id)
+    if not client:
+        await message.answer("🔒 Сначала авторизуйтесь через /start")
+        return
+
+    help_text = (
+        "Скопируйте текст ниже. Это адрес склада в Китае"
+    )
+
     warehouse_text = (
-        "🏢 <b>АДРЕС СКЛАДА В КИТАЕ</b>\n"
-        "────────────────────\n\n"
-        "收货人: F-код\n"
+        f"收货人: {client['client_code']}\n"
         "广东省广州市越秀区荔德路318号\n"
         "汇富国际A27栋103号 1899库房\n"
-        "比什凯克 “номер тел” 唛头 F-код\n"
+        f"比什凯克 {client['phone']} 唛头 F-код\n"
         "电话: 13711589799\n\n"
+    )
+
+    important_text = (
         "<b>Важно:</b>\n"
         "Обязательно отправьте скриншот заполненного адреса менеджеру.\n"
         "Только после подтверждения правильности заполнения мы несём ответственность за груз.\n\n"
@@ -163,8 +173,9 @@ async def warehouse(message: Message):
 
     photo = FSInputFile(photo_path)
 
-    await message.answer_photo(photo=photo, caption=warehouse_text, parse_mode="HTML")
-
+    await message.answer(help_text, parse_mode="HTML")
+    await message.answer(warehouse_text, parse_mode="HTML")
+    await message.answer_photo(photo=photo, caption=important_text, parse_mode="HTML")
 
 
 @dp.message(F.text == "📦 Актуальные посылки")
