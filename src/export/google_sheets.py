@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from database.mongo_db import mongo_db, save_client, save_shipment
-from notify import notify_client_about_sent
+from notify import notify_client_about_delivered, notify_client_about_sent
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -116,10 +116,13 @@ async def sync_shipments(bot):
 
         existing = mongo_db.shipments.find_one({"tracking_number": tracking})
 
-        save_shipment(data)
+        if data["delivery_date"] and (not existing or not existing.get("delivery_date")):
+            await notify_client_about_delivered(bot, data)
 
         if data["sent_date"] and (not existing or not existing.get("sent_date")):
             await notify_client_about_sent(bot, data)
+
+        save_shipment(data)
 
     print(f"Синхронизировано отправлений: {len(rows)}")
 
@@ -141,5 +144,5 @@ async def periodic_sync(bot):
         except Exception as e:
             print("❌ Ошибка синхронизации:", e)
 
-        await asyncio.sleep(60 * 60)
+        await asyncio.sleep(60 * 3)
 

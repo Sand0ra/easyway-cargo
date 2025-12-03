@@ -26,7 +26,13 @@ def get_client_by_phone(phone: str):
 def get_active_shipments(client_code):
     return list(
         mongo_db.shipments.find(
-            {"client_code": client_code, "status": {"$ne": "получена"}}
+            {
+                "client_code": client_code,
+                "$or": [
+                    {"delivery_date": ""},
+                    {"delivery_date": {"$exists": False}}
+                ]
+            }
         )
     )
 
