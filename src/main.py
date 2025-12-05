@@ -158,7 +158,7 @@ async def warehouse(message: Message):
         f"收货人: {client['client_code']}\n"
         "广东省广州市越秀区荔德路318号\n"
         "汇富国际A27栋103号 1899库房\n"
-        f"比什凯克 {client['phone']} 唛头 F-код\n"
+        f"比什凯克 {client['phone']} 唛头 {client['client_code']}\n"
         "电话: 13711589799\n\n"
     )
 
@@ -265,6 +265,12 @@ async def video_instruction(message: Message):
                 InlineKeyboardButton(
                     text="👟 Poizon",
                     url="https://youtube.com/shorts/y40P6sRT5tc?feature=share",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚚 Pinduoduo",
+                    url="https://youtube.com/shorts/SECQUbfffr8?feature=share",
                 )
             ],
         ]
