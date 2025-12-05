@@ -315,18 +315,23 @@ async def faq(message: Message):
 async def contact(message: Message):
     """Контактная информация"""
     contact_text = (
-        "📞 <b>СВЯЗАТЬСЯ С НАМИ</b>\n"
+        "👋 <b>КОНТАКТНАЯ ИНФОРМАЦИЯ</b>\n\n"
+        "🏢 <b>EasyWay Cargo</b>\n"
         "─────────────\n\n"
-        "💬 Мы всегда рады помочь вам!\n\n"
-        "<b>📱 WhatsApp:</b>\n"
-        "📞 0998 001688\n\n"
-        "<b>📸 Instagram:</b>\n"
-        "@easyway_cargo_kg\n\n"
-        "<b>📢 Telegram канал:</b>\n"
-        "Скоро будет...\n\n"
+        "💬 <b>Поддержка клиентов:</b>\n"
+        "• Мы всегда рады помочь вам!\n\n"
+        "📱 <b>WhatsApp:</b>\n"
+        "• <a href='https://wa.me/996998001688'>+996 998 00 16 88</a>\n"
+        "  └─ Быстрый ответ в течение 5 минут\n\n"
+        "📸 <b>Instagram:</b>\n"
+        "• <a href='https://www.instagram.com/easyway_cargo_kg'>@easyway_cargo_kg</a>\n"
+        "  └─ Фото и полезные видео\n\n"
+        "📢 <b>Telegram канал:</b>\n"
+        "• <a href='https://t.me/easywaycargo_kg'>@easywaycargo_kg</a>\n"
+        "  └─ Новости и обновления\n\n"
     )
 
-    await message.answer(contact_text, parse_mode="HTML")
+    await message.answer(contact_text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(F.text == "➕ Добавить трек")
@@ -455,15 +460,15 @@ async def main():
     print("📞 Ожидание сообщений...")
 
     try:
-        sync_task = asyncio.create_task(periodic_sync(bot))
+        # sync_task = asyncio.create_task(periodic_sync(bot))
 
         await dp.start_polling(bot)
 
-        sync_task.cancel()
-        try:
-            await sync_task
-        except asyncio.CancelledError:
-            pass
+        # sync_task.cancel()
+        # try:
+        #     await sync_task
+        # except asyncio.CancelledError:
+        #     pass
 
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
