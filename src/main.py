@@ -460,15 +460,15 @@ async def main():
     print("📞 Ожидание сообщений...")
 
     try:
-        # sync_task = asyncio.create_task(periodic_sync(bot))
+        sync_task = asyncio.create_task(periodic_sync(bot))
 
         await dp.start_polling(bot)
 
-        # sync_task.cancel()
-        # try:
-        #     await sync_task
-        # except asyncio.CancelledError:
-        #     pass
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
 
     except Exception as e:
         print(f"❌ Ошибка при запуске бота: {e}")
